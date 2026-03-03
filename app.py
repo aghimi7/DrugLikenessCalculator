@@ -6,7 +6,6 @@ import joblib
 import json
 from rdkit import Chem
 from rdkit.Chem import Descriptors
-from rdkit.ML.Descriptors import MoleculeDescriptors
 from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
 
 class DrugLikenessNN(nn.Module):
@@ -23,7 +22,6 @@ class DrugLikenessNN(nn.Module):
 @st.cache_resource
 def load_assets():
     scaler = joblib.load("scaler.pkl")
-    # Load the strict column order from HPC
     with open("feature_names.json", "r") as f:
         feature_order = json.load(f)
     model = DrugLikenessNN(1241) 
@@ -35,31 +33,42 @@ def featurize(smiles, scaler, feature_order):
     mol = Chem.MolFromSmiles(smiles)
     if not mol: return None
     
-    # Calculate ALL available descriptors
-    names = [x[0] for x in Descriptors._descList]
-    calc = MoleculeDescriptors.MolecularDescriptorCalculator(names)
-    ds_values = calc.CalcDescriptors(mol)
-    ds_dict = dict(zip(names, ds_values))
+    # 1. Create a dictionary of ALL possible RDKit descriptors for this molecule
+    # This is more reliable than the 'Calculator' object
+    available_descriptors = {name: func(mol) for name, func in Descriptors._descList}
     
-    # Calculate Bits
+    # 2. Add structural bits to the dictionary
     fp = list(GetMorganFingerprintAsBitVect(mol, 2, 1024))
     for i, bit in enumerate(fp):
-        ds_dict[f'bit_{i}'] = bit
+        available_descriptors[f'bit_{i}'] = bit
 
-    # FORCE DATA INTO THE EXACT ORDER USED DURING TRAINING
-    final_features = []
-    for col in feature_order:
-        final_features.append(ds_dict.get(col, 0)) # Default to 0 if missing
+    # 3. Reconstruct the vector using the EXACT order from the HPC JSON
+    # This guarantees that the weights match the chemistry
+    final_vector = []
+    for col_name in feature_order:
+        # Fetch value, default to 0.0 if the descriptor is missing in this RDKit version
+        val = available_descriptors.get(col_name, 0.0)
+        final_vector.append(val)
     
-    X = np.array(final_features).reshape(1, -1)
+    X = np.array(final_vector).reshape(1, -1)
     
-    # Separate Phys and Bits for scaling (Phys are the first 217)
-    phys_scaled = np.clip(scaler.transform(X[:, :217]), -100, 100)
-    X_final = np.hstack([phys_scaled, X[:, 217:]])
+    # 4. Clean NaNs/Infs (Just like we did in training)
+    X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # 5. Scale physical props (Indices 0 to 216) and keep bits raw
+    # Note: We use the feature names to find the split point dynamically
+    phys_len = len([c for c in feature_order if 'bit_' not in c])
+    
+    X_phys = X[:, :phys_len]
+    X_bits = X[:, phys_len:]
+    
+    # Apply scaling to physical part only
+    X_phys_scaled = np.clip(scaler.transform(X_phys), -100, 100)
+    X_final = np.hstack([X_phys_scaled, X_bits])
     
     return torch.tensor(X_final, dtype=torch.float32)
 
-# --- UI Logic ---
+# --- UI Setup ---
 st.set_page_config(page_title="Drug Likeness Calculator", page_icon="💊")
 st.title("💊 Drug Likeness Calculator")
 
@@ -74,13 +83,16 @@ if st.button("Calculate Probability"):
             prob = model(features).item()
         
         st.write("---")
+        score = prob * 100
         if prob > 0.5:
-            st.success(f"### Score: {prob*100:.1f}% (Drug-like)")
+            st.success(f"### Medicinal Score: {score:.1f}%")
+            st.write("**Assessment:** Drug-like")
         else:
-            st.error(f"### Score: {prob*100:.1f}% (Non-drug-like)")
+            st.error(f"### Medicinal Score: {score:.1f}%")
+            st.write("**Assessment:** Non-drug-like")
         st.progress(prob)
     else:
-        st.error("Invalid SMILES structure.")
+        st.error("Invalid structure.")
 
 st.sidebar.title("Technical Stats")
 st.sidebar.markdown("""
@@ -91,4 +103,5 @@ st.sidebar.markdown("""
 - **Matthews Correlation (MCC):** 0.84
 
 """)
+
 
