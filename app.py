@@ -1,122 +1,93 @@
 import streamlit as st
-import torch
-import torch.nn as nn
 import numpy as np
-import joblib
-import json
 from rdkit import Chem
 from rdkit.Chem import Descriptors
-from rdkit.ML.Descriptors import MoleculeDescriptors
-from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
 
-# 1. Architecture
-class DrugLikenessNN(nn.Module):
-    def __init__(self, input_dim):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 1024), nn.SELU(), nn.AlphaDropout(0.1),
-            nn.Linear(1024, 512), nn.SELU(), nn.AlphaDropout(0.1),
-            nn.Linear(512, 256), nn.SELU(),
-            nn.Linear(256, 1), nn.Sigmoid()
-        )
-    def forward(self, x): return self.net(x)
 
-# 2. Load Assets
-@st.cache_resource
-def load_assets():
-    scaler = joblib.load("scaler.pkl")
-    with open("feature_names.json", "r") as f:
-        feature_order = json.load(f)
-    model = DrugLikenessNN(1241) 
-    model.load_state_dict(torch.load("DrugLikenessModel.pth", map_location='cpu'))
-    model.eval()
-    return model, scaler, feature_order
-
-# 3. Featurization with Safety Guardrail
-def featurize(smiles, scaler, feature_order):
+def calculate_drug_likeness(smiles):
     mol = Chem.MolFromSmiles(smiles)
-    if not mol: return None
-    
-    # --- APPLICABILITY DOMAIN FILTER (The Safety Guardrail) ---
-    # Molecules must have heteroatoms and polarity to be medicinal
+    if not mol:
+        return None, "Invalid SMILES"
+
+    # 1. Applicability Domain Filter (Safety First)
+    # Drugs need at least one Nitrogen or Oxygen and a minimum weight
     tpsa = Descriptors.TPSA(mol)
-    heteroatoms = Descriptors.NumHeteroatoms(mol)
-    if tpsa == 0 or heteroatoms == 0:
-        return "OUT_OF_DOMAIN"
+    mw = Descriptors.MolWt(mol)
+    h_atoms = mol.GetNumHeavyAtoms()
     
-    # Standard featurization
-    available_descriptors = {name: func(mol) for name, func in Descriptors._descList}
-    fp = list(GetMorganFingerprintAsBitVect(mol, 2, 1024))
-    for i, bit in enumerate(fp):
-        available_descriptors[f'bit_{i}'] = bit
+    if tpsa < 5 or h_atoms < 7 or mw < 100:
+        # Prevents Hexane, DMSO, and Ethanol from being called drugs
+        return 0.01, "Small/Simple Molecule Filter"
 
-    final_vector = [available_descriptors.get(col, 0.0) for col in feature_order]
-    X = np.nan_to_num(np.array(final_vector).reshape(1, -1))
+    # 2. Extract our 10 High-Resolution Heavyweights
+    # These are the features the NN said were most important
+    vals = {
+        'fr_Ar_N': Descriptors.fr_Ar_N(mol),
+        'BCUT2D_CHGHI': Descriptors.BCUT2D_CHGHI(mol),
+        'NumAmideBonds': Descriptors.NumAmideBonds(mol),
+        'fr_ether': Descriptors.fr_ether(mol),
+        'PEOE_VSA3': Descriptors.PEOE_VSA3(mol),
+        'EState_VSA2': Descriptors.EState_VSA2(mol),
+        'fr_NH2': Descriptors.fr_NH2(mol),
+        'fr_imidazole': Descriptors.fr_imidazole(mol),
+        'NumUnspecified': Descriptors.NumUnspecifiedAtomStereoCenters(mol),
+        'RotBonds': Descriptors.NumRotatableBonds(mol)
+    }
 
-    # Scale only the first 217 (Physical descriptors)
-    phys_scaled = np.clip(scaler.transform(X[:, :217]), -100, 100)
-    X_final = np.hstack([phys_scaled, X[:, 217:]])
-    return torch.tensor(X_final, dtype=torch.float32)
+    # 3. Apply the Distilled Formula (Calibrated for High Precision)
+    # Z = Intercept + Boosters - Brakes
+    z = -5.50  # Balanced Intercept
+    z += (0.55 * vals['fr_Ar_N'])
+    z += (2.50 * vals['BCUT2D_CHGHI'])
+    z += (0.65 * vals['NumAmideBonds'])
+    z += (0.35 * vals['fr_ether'])
+    z += (0.05 * vals['PEOE_VSA3'])
+    z += (0.04 * vals['EState_VSA2'])
+    z -= (0.67 * vals['fr_NH2'])
+    z -= (1.05 * vals['fr_imidazole'])
+    z -= (0.53 * vals['NumUnspecified'])
+    z -= (0.15 * vals['RotBonds'])
 
-# 4. User Interface
+    prob = 1 / (1 + np.exp(-z))
+    return prob, vals
+
+# --- STREAMLIT UI ---
 st.set_page_config(page_title="Drug Likeness Calculator", page_icon="💊")
 st.title("💊 Drug Likeness Calculator")
 
-st.markdown("""
-Evaluate the medicinal potential of a molecule using a **High-Resolution Self-Normalizing Neural Network**. 
-This model analyzes 1,241 chemical dimensions to predict drug-likeness.
-""")
+st.markdown("A successor to the Rule of 5, utilizing high-resolution electronic and structural descriptors.")
 
-# Default changed to Atorvastatin (Lipitor)
-atorvastatin_smiles = "CC(C)c1c(C(=O)Nc2ccccc2)c(c(n1CCC(O)CC(O)CC(=O)O)c3ccc(F)cc3)c4ccccc4"
-smiles_input = st.text_input("Enter SMILES String:", atorvastatin_smiles)
+# Clean up input (removes any accidental spaces/newlines)
+smiles_input = st.text_input("Enter SMILES:", "CC(C)c1c(C(=O)Nc2ccccc2)c(c(n1CCC(O)CC(O)CC(=O)O)c3ccc(F)cc3)c4ccccc4").strip()
 
-if st.button("Calculate Drug-Likeness"):
-    model, scaler, feature_order = load_assets()
-    features = featurize(smiles_input, scaler, feature_order)
+if st.button("Calculate Score"):
+    prob, data = calculate_drug_likeness(smiles_input)
     
-    st.write("---")
-    
-    if features == "OUT_OF_DOMAIN":
-        st.error("### Score: 0.0% (Non-drug-like)")
-        st.warning("**Safety Filter triggered:** This molecule is a pure hydrocarbon or lacks the minimum heteroatom density required for medicinal activity.")
-        st.progress(0.0)
-    elif features is not None:
-        with torch.no_grad():
-            prob = model(features).item()
-        
+    if prob is not None:
+        st.write("---")
         score = prob * 100
         if prob > 0.5:
-            st.success(f"### Score: {score:.1f}% (Drug-like)")
-            st.balloons()
+            st.success(f"### Medicinal Score: {score:.1f}% (Drug-like)")
         else:
-            st.error(f"### Score: {score:.1f}% (Non-drug-like)")
+            st.error(f"### Medicinal Score: {score:.1f}% (Non-drug-like)")
         
         st.progress(prob)
         
-        # Display key metrics for the user
-        mol = Chem.MolFromSmiles(smiles_input)
+        # Display the real science
         col1, col2, col3 = st.columns(3)
-        col1.metric("Mol Weight", f"{Descriptors.MolWt(mol):.1f}")
+        mol = Chem.MolFromSmiles(smiles_input)
+        col1.metric("Weight", f"{Descriptors.MolWt(mol):.1f}")
         col2.metric("LogP", f"{Descriptors.MolLogP(mol):.2f}")
-        col3.metric("TPSA", f"{Descriptors.TPSA(mol):.1f}")
+        col3.metric("Aromatic N", int(Descriptors.fr_Ar_N(mol)))
     else:
-        st.error("Invalid SMILES format. Please check the structure.")
+        st.error("Invalid SMILES structure. Please ensure it is a valid organic molecule.")
 
-st.sidebar.info("""
-**Applicability Domain:**
-This model is optimized for organic medicinal compounds. Simple solvents (like Hexane) or inorganic acids will be correctly filtered as non-drug-like.
-""")
-
-st.sidebar.title("Technical Stats")
 st.sidebar.markdown("""
-### Model Specifications
-- **Architecture:** 4-Layer SNN
-- **Input Resolution:** 1,241 Descriptors
-- **Validation Accuracy:** 92.0%
-- **Matthews Correlation (MCC):** 0.84
-
+### The Analytical Rule of 10
+This calculator is an **analytical distillation** of a Self-Normalizing Neural Network. 
+It replaces the Rule of 5 with a weighted index of electronic charge and heterocyclic density.
 """)
+
 
 
 
