@@ -3,12 +3,12 @@ import torch
 import torch.nn as nn
 import numpy as np
 import joblib
+import json
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 from rdkit.ML.Descriptors import MoleculeDescriptors
 from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
 
-# 1. Architecture (Renamed for the Calculator project)
 class DrugLikenessNN(nn.Module):
     def __init__(self, input_dim):
         super().__init__()
@@ -20,66 +20,67 @@ class DrugLikenessNN(nn.Module):
         )
     def forward(self, x): return self.net(x)
 
-# 2. Load Assets (Updated to look for DrugLikenessModel.pth)
 @st.cache_resource
 def load_assets():
     scaler = joblib.load("scaler.pkl")
+    # Load the strict column order from HPC
+    with open("feature_names.json", "r") as f:
+        feature_order = json.load(f)
     model = DrugLikenessNN(1241) 
-    # Must match the filename in your GitHub repo exactly
     model.load_state_dict(torch.load("DrugLikenessModel.pth", map_location='cpu'))
     model.eval()
-    return model, scaler
+    return model, scaler, feature_order
 
-# 3. Featurization Logic
-def featurize(smiles, scaler):
+def featurize(smiles, scaler, feature_order):
     mol = Chem.MolFromSmiles(smiles)
     if not mol: return None
     
-    # 217 PhysChem Descriptors
+    # Calculate ALL available descriptors
     names = [x[0] for x in Descriptors._descList]
     calc = MoleculeDescriptors.MolecularDescriptorCalculator(names)
-    phys = np.array(calc.CalcDescriptors(mol)).reshape(1, -1)
+    ds_values = calc.CalcDescriptors(mol)
+    ds_dict = dict(zip(names, ds_values))
     
-    # 1,024 Morgan Bits
-    bits = np.array(GetMorganFingerprintAsBitVect(mol, 2, 1024)).reshape(1, -1)
-    
-    # Scaling and Clipping
-    phys_scaled = np.clip(scaler.transform(phys), -100, 100)
-    X = np.hstack([phys_scaled, bits])
-    return torch.tensor(X, dtype=torch.float32)
+    # Calculate Bits
+    fp = list(GetMorganFingerprintAsBitVect(mol, 2, 1024))
+    for i, bit in enumerate(fp):
+        ds_dict[f'bit_{i}'] = bit
 
-# 4. User Interface
+    # FORCE DATA INTO THE EXACT ORDER USED DURING TRAINING
+    final_features = []
+    for col in feature_order:
+        final_features.append(ds_dict.get(col, 0)) # Default to 0 if missing
+    
+    X = np.array(final_features).reshape(1, -1)
+    
+    # Separate Phys and Bits for scaling (Phys are the first 217)
+    phys_scaled = np.clip(scaler.transform(X[:, :217]), -100, 100)
+    X_final = np.hstack([phys_scaled, X[:, 217:]])
+    
+    return torch.tensor(X_final, dtype=torch.float32)
+
+# --- UI Logic ---
 st.set_page_config(page_title="Drug Likeness Calculator", page_icon="💊")
-
 st.title("💊 Drug Likeness Calculator")
-st.markdown("""
-This tool uses a high-resolution **Self-Normalizing Neural Network (SNN)** 
-trained on the ChEMBL 34 database to predict if a molecule possesses 
-the structural and electronic signatures characteristic of a drug.
-""")
 
-smiles_input = st.text_input("Enter SMILES String:", "Cc1cc(-c2csc(N=C(N)N)n2)cn1C")
+smiles_input = st.text_input("Enter SMILES String:", "CC1C(C(C(OC1OC2C3C=C4C=C3OC5=C(C=C(C=C5)C(C(C(=O)NC(C(=O)NC6C=C(C=C(C=C6OC7C(C(C(C(O7)CO)O)O)O)O2)OC8C(C(C(C(O8)CO)O)O)O)C(=O)NC(C4=O)C9=C(C=C(C=C9)O)O)N)O)Cl)O)O)(N)O")
 
 if st.button("Calculate Probability"):
-    model, scaler = load_assets()
-    features = featurize(smiles_input, scaler)
+    model, scaler, feature_order = load_assets()
+    features = featurize(smiles_input, scaler, feature_order)
     
     if features is not None:
         with torch.no_grad():
             prob = model(features).item()
         
         st.write("---")
-        score = prob * 100
-        
         if prob > 0.5:
-            st.success(f"### Score: {score:.1f}% (Drug-like)")
+            st.success(f"### Score: {prob*100:.1f}% (Drug-like)")
         else:
-            st.error(f"### Score: {score:.1f}% (Non-drug-like)")
-            
+            st.error(f"### Score: {prob*100:.1f}% (Non-drug-like)")
         st.progress(prob)
-        st.caption("Based on 1,241 physicochemical and structural descriptors.")
     else:
-        st.error("Invalid SMILES. Please check the structure.")
+        st.error("Invalid SMILES structure.")
 
 st.sidebar.title("Technical Stats")
 st.sidebar.markdown("""
@@ -90,3 +91,4 @@ st.sidebar.markdown("""
 - **Matthews Correlation (MCC):** 0.84
 
 """)
+
