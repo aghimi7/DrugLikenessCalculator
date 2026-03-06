@@ -67,7 +67,7 @@ def featurize_medicinal(smiles, scaler, feature_order):
 # 4. USER INTERFACE
 st.set_page_config(page_title="Drug Likeness Calculator", page_icon="💊")
 st.title("💊 Drug Likeness Calculator")
-st.markdown("#### High-Resolution Neural Predictor (99.4% Generalization)")
+st.markdown("#### High-Resolution Neural Predictor")
 
 atorvastatin_smi = "CC(C)c1c(C(=O)Nc2ccccc2)c(-c2ccccc2)c(-c2ccc(F)cc2)n1CC[C@@H](O)C[C@@H](O)CC(=O)O"
 smiles_input = st.text_area("Enter SMILES String:", atorvastatin_smi, height=100)
@@ -102,5 +102,5 @@ st.sidebar.info("""
 - **Training Data:** 208,312 molecules (ChEMBL 34)
 - **Features:** 1,238 High-Res Descriptors
 - **Architecture:** 4-Layer Self-Normalizing NN
-- **Validation:** 99.4% Recall on Unseen Drugs
+
 """)
