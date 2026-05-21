@@ -339,7 +339,7 @@ html, body, [class*="css"] {
 
 st.markdown("""
 <div class="masthead">
-    <div class="masthead-label"></div>
+    <div class="masthead-label">Drug-Likeness Prediction</div>
     <div class="masthead-title">DrugLikenessModel</div>
     <div class="masthead-sub">
         A bioactivity-grounded successor to Lipinski's Rule of Five.
@@ -484,27 +484,84 @@ with st.expander("Model architecture & scoring formula"):
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**Tier 1 — Standard molecules (MW < 500 Da)**")
-        st.latex(r"Z = -9.72 + 4.35\,B + 0.41\,N_{Ar} + 0.01\,\text{TPSA} + 0.04\,V_2 + 0.03\,V_{10}"
-                 r"+ 0.23\,H_{Ar} - 1.67\,G - 0.16\,R - 0.03\,S - 0.12\,\chi")
-    with c2:
-        st.markdown("**Tier 2 — bRo5 / Macrocycles (MW ≥ 500 Da)**")
-        st.latex(r"Z = -17.30 + 8.12\,B + 0.01\,\text{TPSA} + 0.04\,V_2 + 0.45\,H_{Ar} + 0.14\,N_{Ar}"
-                 r"- 0.96\,G - 0.04\,V_{10} - 0.26\,R - 0.01\,S - 0.14\,\chi")
+    st.markdown("**Tier 1 — Standard molecules (MW < 500 Da)**")
+    st.latex(
+        r"Z = -9.7165"
+        r" + 4.3450\,(\text{BCUT2D\_CHGHI})"
+        r" + 0.4140\,(\text{fr\_Ar\_N})"
+        r" + 0.0100\,(\text{TPSA})"
+        r" + 0.0422\,(\text{EState\_VSA2})"
+        r" + 0.0292\,(\text{EState\_VSA10})"
+        r" + 0.2297\,(\text{NumArHetero})"
+        r" - 1.6688\,(\text{fr\_guanido})"
+        r" - 0.1624\,(\text{RingCount})"
+        r" - 0.0265\,(\text{SMR\_VSA6})"
+        r" - 0.1161\,(\text{Chi1n})"
+    )
 
+    st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
+
+    st.markdown("**Tier 2 — bRo5 / Macrocycles (MW ≥ 500 Da)**")
+    st.latex(
+        r"Z = -17.2985"
+        r" + 8.1213\,(\text{BCUT2D\_CHGHI})"
+        r" + 0.1382\,(\text{fr\_Ar\_N})"
+        r" + 0.0104\,(\text{TPSA})"
+        r" + 0.0406\,(\text{EState\_VSA2})"
+        r" - 0.0368\,(\text{EState\_VSA10})"
+        r" + 0.4550\,(\text{NumArHetero})"
+        r" - 0.9592\,(\text{fr\_guanido})"
+        r" - 0.2622\,(\text{RingCount})"
+        r" - 0.0095\,(\text{SMR\_VSA6})"
+        r" - 0.1402\,(\text{Chi1n})"
+    )
+
+    st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
     st.latex(r"P = \frac{1}{1 + e^{-Z}}")
 
-    st.markdown("""
-    <div style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#9ca3af;
-                line-height:1.8;margin-top:0.8rem;">
-    B = BCUT2D_CHGHI &nbsp;·&nbsp; N<sub>Ar</sub> = fr_Ar_N &nbsp;·&nbsp;
-    V<sub>2,10</sub> = EState_VSA2/10 &nbsp;·&nbsp; H<sub>Ar</sub> = NumArHetero &nbsp;·&nbsp;
-    G = fr_guanido &nbsp;·&nbsp; R = RingCount &nbsp;·&nbsp;
-    S = SMR_VSA6 &nbsp;·&nbsp; χ = Chi1n
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+    st.markdown('<div class="section-head">Descriptor Coefficients</div>', unsafe_allow_html=True)
+
+    coef_df = pd.DataFrame({
+        "Descriptor": [
+            "BCUT2D_CHGHI",
+            "fr_Ar_N",
+            "TPSA",
+            "EState_VSA2",
+            "EState_VSA10",
+            "NumArHetero",
+            "fr_guanido",
+            "RingCount",
+            "SMR_VSA6",
+            "Chi1n",
+        ],
+        "Description": [
+            "Highest generic charge — electrostatic distribution",
+            "Number of aromatic nitrogens — hydrogen bonding capacity",
+            "Topological polar surface area — membrane permeability",
+            "Electrotopological state VSA (bin 2) — electron accessibility",
+            "Electrotopological state VSA (bin 10) — steric bulk",
+            "Number of aromatic heteroatoms",
+            "Number of guanidine groups — high basicity",
+            "Total ring count — rigidity and complexity",
+            "Molar refractivity VSA (bin 6) — polarizability",
+            "1st-order path connectivity index — structural branching",
+        ],
+        "Tier 1 coeff.": [
+            "+4.3450", "+0.4140", "+0.0100", "+0.0422", "+0.0292",
+            "+0.2297", "−1.6688", "−0.1624", "−0.0265", "−0.1161",
+        ],
+        "Tier 2 coeff.": [
+            "+8.1213", "+0.1382", "+0.0104", "+0.0406", "−0.0368",
+            "+0.4550", "−0.9592", "−0.2622", "−0.0095", "−0.1402",
+        ],
+    })
+
+    st.dataframe(
+        coef_df,
+        use_container_width=True,
+        hide_index=True,
+    )
 
 st.markdown("""
 <div style="margin-top:3rem;padding-top:1.2rem;border-top:1px solid #e5e7eb;
