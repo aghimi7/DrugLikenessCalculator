@@ -477,7 +477,7 @@ with st.expander("Model architecture & scoring formula"):
     <strong>Piecewise formula.</strong> Top 10 descriptors selected by XGBoost feature importance.
     A surrogate logistic regression was trained on these 10 features against the SNN's continuous
     output probability (not the original binary labels), stratified by molecular weight to yield
-    two tiers. Pearson R = 0.32 against full model; ~80% binary classification accuracy retained.
+    two tiers. Pearson R = 0.32 against full model; ~75% binary classification accuracy retained.
     </p>
     </div>
     """, unsafe_allow_html=True)
