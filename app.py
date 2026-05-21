@@ -339,7 +339,7 @@ html, body, [class*="css"] {
 
 st.markdown("""
 <div class="masthead">
-    <div class="masthead-label">LSU · Biological Sciences</div>
+    <div class="masthead-label"></div>
     <div class="masthead-title">DrugLikenessModel</div>
     <div class="masthead-sub">
         A bioactivity-grounded successor to Lipinski's Rule of Five.
@@ -511,7 +511,7 @@ st.markdown("""
             display:flex;justify-content:space-between;align-items:center;
             font-size:0.75rem;color:#9ca3af;">
     <span style="font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;">
-        DrugLikenessModel · Louisiana State University
+        DrugLikenessModel
     </span>
     <span>Trained on ChEMBL 34 · 209,269 compounds</span>
 </div>
