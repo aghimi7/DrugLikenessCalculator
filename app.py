@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import joblib
 import json
+import io
 from scipy.special import expit
 from rdkit import Chem
 from rdkit.Chem import Descriptors
@@ -113,6 +114,50 @@ def calculate_formula(mol, desc_dict):
 
     return expit(Z)
 
+def get_ro5_violations(mw, logp, hbd, hba):
+    violations = []
+    if mw > 500:
+        violations.append(f"Molecular weight {mw:.1f} Da  (limit: 500 Da)")
+    if logp > 5:
+        violations.append(f"LogP {logp:.2f}  (limit: 5)")
+    if hbd > 5:
+        violations.append(f"H-bond donors {hbd}  (limit: 5)")
+    if hba > 10:
+        violations.append(f"H-bond acceptors {hba}  (limit: 10)")
+    return violations
+
+def evaluate_single(smiles, model, scaler, feature_order):
+    X_tensor, raw_desc_dict, mol = process_molecule(smiles, scaler, feature_order)
+    if X_tensor is None:
+        return None
+    with torch.no_grad():
+        model_prob = model(X_tensor).item() * 100
+    formula_prob = calculate_formula(mol, raw_desc_dict) * 100
+    mw   = Descriptors.MolWt(mol)
+    logp = Descriptors.MolLogP(mol)
+    tpsa = Descriptors.TPSA(mol)
+    hbd  = Descriptors.NumHDonors(mol)
+    hba  = Descriptors.NumHAcceptors(mol)
+    rings = Descriptors.RingCount(mol)
+    n_rot = Descriptors.NumRotatableBonds(mol)
+    tier  = "Tier 2 — bRo5" if mw >= 500 else "Tier 1 — Standard"
+    ro5_v = get_ro5_violations(mw, logp, hbd, hba)
+    return {
+        "mol":          mol,
+        "model_prob":   model_prob,
+        "formula_prob": formula_prob,
+        "mw":           mw,
+        "logp":         logp,
+        "tpsa":         tpsa,
+        "hbd":          hbd,
+        "hba":          hba,
+        "rings":        rings,
+        "n_rot":        n_rot,
+        "tier":         tier,
+        "ro5_v":        ro5_v,
+        "desc":         raw_desc_dict,
+    }
+
 st.set_page_config(
     page_title="DrugLikenessModel",
     page_icon="⬡",
@@ -128,11 +173,7 @@ html, body, [class*="css"] {
     font-family: 'Source Sans 3', sans-serif;
     color: #1a1a2e;
 }
-
-.stApp {
-    background-color: #f7f7f5;
-}
-
+.stApp { background-color: #f7f7f5; }
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding-top: 2.5rem; padding-bottom: 3rem; max-width: 1100px; }
 
@@ -202,7 +243,7 @@ html, body, [class*="css"] {
     font-size: 0.85rem;
     font-weight: 500;
     letter-spacing: 0.04em;
-    margin-bottom: 1.1rem;
+    margin-bottom: 0.5rem;
 }
 .result-verdict.high { color: #059669; }
 .result-verdict.low  { color: #dc2626; }
@@ -211,6 +252,20 @@ html, body, [class*="css"] {
     color: #9ca3af;
     font-weight: 300;
     line-height: 1.5;
+}
+.result-note {
+    font-size: 0.78rem;
+    color: #6b7280;
+    background: #f9fafb;
+    border-left: 3px solid #d1d5db;
+    padding: 0.5rem 0.75rem;
+    margin-top: 0.8rem;
+    border-radius: 0 3px 3px 0;
+    line-height: 1.5;
+}
+.result-note.primary {
+    border-left-color: #1a1a2e;
+    background: #f0f0ef;
 }
 
 .stProgress > div > div > div > div {
@@ -223,11 +278,33 @@ html, body, [class*="css"] {
     height: 4px !important;
 }
 
+.tier-badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.25rem 0.65rem;
+    border-radius: 2px;
+    font-weight: 500;
+    margin-bottom: 1rem;
+}
+.tier-badge.t1 {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border: 1px solid #bfdbfe;
+}
+.tier-badge.t2 {
+    background: #fdf4ff;
+    color: #7e22ce;
+    border: 1px solid #e9d5ff;
+}
+
 .prop-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
-    margin-top: 1.6rem;
+    margin-top: 1.2rem;
 }
 .prop-cell {
     background: #f9fafb;
@@ -235,6 +312,8 @@ html, body, [class*="css"] {
     border-radius: 4px;
     padding: 1rem 1.2rem;
 }
+.prop-cell.tier1 { border-top: 3px solid #1d4ed8; }
+.prop-cell.tier2 { border-top: 3px solid #7e22ce; }
 .prop-name {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.65rem;
@@ -249,17 +328,35 @@ html, body, [class*="css"] {
     font-weight: 500;
     color: #1a1a2e;
 }
+.prop-value.mw-t1 { color: #1d4ed8; }
+.prop-value.mw-t2 { color: #7e22ce; }
 .prop-unit {
     font-size: 0.72rem;
     color: #9ca3af;
     margin-left: 3px;
 }
 
-.divider {
-    border: none;
-    border-top: 1px solid #e5e7eb;
-    margin: 2rem 0;
+.violation-item {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: #991b1b;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 3px;
+    padding: 0.3rem 0.7rem;
+    margin-bottom: 0.3rem;
 }
+.no-violation {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: #065f46;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 3px;
+    padding: 0.3rem 0.7rem;
+}
+
+.divider { border: none; border-top: 1px solid #e5e7eb; margin: 2rem 0; }
 
 .section-head {
     font-family: 'JetBrains Mono', monospace;
@@ -284,16 +381,6 @@ html, body, [class*="css"] {
 .method-box p { margin: 0 0 0.8rem 0; }
 .method-box p:last-child { margin-bottom: 0; }
 
-.notice {
-    background: #f0fdf4;
-    border: 1px solid #bbf7d0;
-    border-radius: 4px;
-    padding: 0.9rem 1.2rem;
-    font-size: 0.85rem;
-    color: #14532d;
-    margin-bottom: 1.8rem;
-}
-
 .stButton > button {
     background-color: #1a1a2e !important;
     color: #ffffff !important;
@@ -306,9 +393,7 @@ html, body, [class*="css"] {
     padding: 0.6rem 2rem !important;
     transition: opacity 0.15s ease !important;
 }
-.stButton > button:hover {
-    opacity: 0.82 !important;
-}
+.stButton > button:hover { opacity: 0.82 !important; }
 
 .stTextInput > div > div > input {
     font-family: 'JetBrains Mono', monospace !important;
@@ -334,6 +419,13 @@ html, body, [class*="css"] {
     border: 1px solid #e5e7eb !important;
     border-radius: 3px !important;
 }
+
+.stTabs [data-baseweb="tab"] {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -349,114 +441,238 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+tab_single, tab_batch = st.tabs(["Single Molecule", "Batch / CSV"])
+
 atorvastatin_smi = "CC(C)c1c(C(=O)Nc2ccccc2)c(-c2ccccc2)c(-c2ccc(F)cc2)n1CC[C@@H](O)C[C@@H](O)CC(=O)O"
 
-st.markdown('<div class="input-label">SMILES Input</div>', unsafe_allow_html=True)
-smiles_input = st.text_input(
-    label="smiles",
-    value=atorvastatin_smi,
-    label_visibility="collapsed",
-    placeholder="Enter canonical SMILES string...",
-)
+with tab_single:
+    st.markdown('<div class="input-label">SMILES Input</div>', unsafe_allow_html=True)
+    smiles_input = st.text_input(
+        label="smiles",
+        value=atorvastatin_smi,
+        label_visibility="collapsed",
+        placeholder="Enter canonical SMILES string...",
+    )
+    st.markdown("<div style='margin-top:0.8rem'></div>", unsafe_allow_html=True)
+    run = st.button("Run Analysis", key="single_run")
 
-st.markdown("<div style='margin-top:0.8rem'></div>", unsafe_allow_html=True)
-run = st.button("Run Analysis")
+    if run:
+        with st.spinner(""):
+            model, scaler, feature_order = load_assets()
+            result = evaluate_single(smiles_input, model, scaler, feature_order)
 
-if run:
-    with st.spinner(""):
-        model, scaler, feature_order = load_assets()
-        X_tensor, raw_desc_dict, mol_obj = process_molecule(smiles_input, scaler, feature_order)
-
-    if X_tensor is None:
-        st.markdown("""
-        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:4px;
-                    padding:0.9rem 1.2rem;font-size:0.85rem;color:#991b1b;margin-top:1rem;">
-            Invalid SMILES string. Please verify the structure and try again.
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        with torch.no_grad():
-            model_prob = model(X_tensor).item() * 100
-        formula_prob = calculate_formula(mol_obj, raw_desc_dict) * 100
-
-        mw      = Descriptors.MolWt(mol_obj)
-        logp    = Descriptors.MolLogP(mol_obj)
-        tpsa    = Descriptors.TPSA(mol_obj)
-        hbd     = Descriptors.NumHDonors(mol_obj)
-        hba     = Descriptors.NumHAcceptors(mol_obj)
-        rings   = Descriptors.RingCount(mol_obj)
-        tier    = "Tier 2 — bRo5 / Macrocycle" if mw >= 500 else "Tier 1 — Standard"
-
-        def score_class(p): return "high" if p >= 50 else "low"
-        def verdict(p): return "Drug-like" if p >= 50 else "Non drug-like"
-
-        st.markdown('<div class="section-head">Prediction Results</div>', unsafe_allow_html=True)
-
-        col1, col2 = st.columns(2, gap="medium")
-
-        with col1:
-            sc = score_class(model_prob)
-            st.markdown(f"""
-            <div class="result-panel">
-                <div class="result-panel-title">Deep Model &nbsp;·&nbsp; 1,238 features</div>
-                <div class="result-score {sc}">{model_prob:.1f}%</div>
-                <div class="result-verdict {sc}">{verdict(model_prob)}</div>
+        if result is None:
+            st.markdown("""
+            <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:4px;
+                        padding:0.9rem 1.2rem;font-size:0.85rem;color:#991b1b;margin-top:1rem;">
+                Invalid SMILES string. Please verify the structure and try again.
             </div>
             """, unsafe_allow_html=True)
-            st.progress(int(model_prob))
-            st.markdown(f'<div class="result-caption">SNN evaluated across all 1,024 structural bits and 214 physicochemical descriptors. Molecule classified under <strong>{tier}</strong>.</div>', unsafe_allow_html=True)
+        else:
+            mw          = result["mw"]
+            logp        = result["logp"]
+            tpsa        = result["tpsa"]
+            hbd         = result["hbd"]
+            hba         = result["hba"]
+            rings       = result["rings"]
+            n_rot       = result["n_rot"]
+            tier        = result["tier"]
+            ro5_v       = result["ro5_v"]
+            model_prob  = result["model_prob"]
+            formula_prob = result["formula_prob"]
+            is_t2       = mw >= 500
 
-        with col2:
-            sc2 = score_class(formula_prob)
+            def sc(p): return "high" if p >= 50 else "low"
+            def vd(p): return "Drug-like" if p >= 50 else "Non drug-like"
+
+            st.markdown('<div class="section-head">Prediction Results</div>', unsafe_allow_html=True)
+
+            tier_cls  = "t2" if is_t2 else "t1"
+            tier_label = "Tier 2 — bRo5 / Macrocycle  ·  MW ≥ 500 Da" if is_t2 else "Tier 1 — Standard  ·  MW < 500 Da"
+
+            col1, col2 = st.columns(2, gap="medium")
+
+            with col1:
+                st.markdown(f"""
+                <div class="result-panel">
+                    <div class="result-panel-title">Deep Model &nbsp;·&nbsp; 1,238 features</div>
+                    <div class="tier-badge {tier_cls}">{tier_label}</div>
+                    <div class="result-score {sc(model_prob)}">{model_prob:.1f}%</div>
+                    <div class="result-verdict {sc(model_prob)}">{vd(model_prob)}</div>
+                    <div class="result-note primary">
+                        This is the primary score. The deep model evaluates all 1,024 structural
+                        fingerprint bits and 214 physicochemical descriptors simultaneously.
+                        Use this score for decision-making.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                st.progress(int(model_prob))
+
+            with col2:
+                st.markdown(f"""
+                <div class="result-panel">
+                    <div class="result-panel-title">Piecewise Formula &nbsp;·&nbsp; Top 10 features</div>
+                    <div class="tier-badge {tier_cls}">{tier_label}</div>
+                    <div class="result-score {sc(formula_prob)}">{formula_prob:.1f}%</div>
+                    <div class="result-verdict {sc(formula_prob)}">{vd(formula_prob)}</div>
+                    <div class="result-note">
+                        This score is for interpretability only. It uses 10 descriptors distilled
+                        from the deep model and retains ~75% of its accuracy (Pearson R = 0.32).
+                        Do not use in place of the model score.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                st.progress(int(formula_prob))
+
+            st.markdown('<hr class="divider">', unsafe_allow_html=True)
+            st.markdown('<div class="section-head">Physicochemical Profile</div>', unsafe_allow_html=True)
+
+            tc = "tier2" if is_t2 else "tier1"
+            mw_cls = "mw-t2" if is_t2 else "mw-t1"
+
             st.markdown(f"""
-            <div class="result-panel">
-                <div class="result-panel-title">Piecewise Formula &nbsp;·&nbsp; Top 10 features</div>
-                <div class="result-score {sc2}">{formula_prob:.1f}%</div>
-                <div class="result-verdict {sc2}">{verdict(formula_prob)}</div>
+            <div class="prop-grid">
+                <div class="prop-cell {tc}">
+                    <div class="prop-name">Mol. Weight</div>
+                    <div class="prop-value {mw_cls}">{mw:.1f}<span class="prop-unit">Da</span></div>
+                </div>
+                <div class="prop-cell">
+                    <div class="prop-name">LogP</div>
+                    <div class="prop-value">{logp:.2f}</div>
+                </div>
+                <div class="prop-cell">
+                    <div class="prop-name">TPSA</div>
+                    <div class="prop-value">{tpsa:.1f}<span class="prop-unit">Å²</span></div>
+                </div>
+                <div class="prop-cell">
+                    <div class="prop-name">HB Donors</div>
+                    <div class="prop-value">{hbd}</div>
+                </div>
+                <div class="prop-cell">
+                    <div class="prop-name">HB Acceptors</div>
+                    <div class="prop-value">{hba}</div>
+                </div>
+                <div class="prop-cell">
+                    <div class="prop-name">Ring Count</div>
+                    <div class="prop-value">{rings}</div>
+                </div>
+                <div class="prop-cell">
+                    <div class="prop-name">Rotatable Bonds</div>
+                    <div class="prop-value">{n_rot}</div>
+                </div>
+                <div class="prop-cell {tc}">
+                    <div class="prop-name">MW Tier</div>
+                    <div class="prop-value" style="font-size:0.82rem;margin-top:3px;">{"bRo5" if is_t2 else "Ro5"}</div>
+                </div>
             </div>
             """, unsafe_allow_html=True)
-            st.progress(int(formula_prob))
-            st.markdown('<div class="result-caption">Surrogate logistic regression distilled from model outputs. Interpretable but constrained — Pearson R = 0.32 against full model.</div>', unsafe_allow_html=True)
 
-        st.markdown('<hr class="divider">', unsafe_allow_html=True)
-        st.markdown('<div class="section-head">Physicochemical Profile</div>', unsafe_allow_html=True)
+            st.markdown('<hr class="divider">', unsafe_allow_html=True)
+            st.markdown('<div class="section-head">Lipinski Rule of Five Violations</div>', unsafe_allow_html=True)
 
-        st.markdown(f"""
-        <div class="prop-grid">
-            <div class="prop-cell">
-                <div class="prop-name">Mol. Weight</div>
-                <div class="prop-value">{mw:.1f}<span class="prop-unit">Da</span></div>
+            with st.expander(f"{len(ro5_v)} violation{'s' if len(ro5_v) != 1 else ''} detected — click to expand"):
+                if ro5_v:
+                    items = "".join(f'<div class="violation-item">✗ &nbsp;{v}</div>' for v in ro5_v)
+                    st.markdown(items, unsafe_allow_html=True)
+                else:
+                    st.markdown('<div class="no-violation">✓ &nbsp;No Ro5 violations — all four thresholds satisfied</div>', unsafe_allow_html=True)
+                st.markdown("""
+                <div style="font-size:0.75rem;color:#9ca3af;margin-top:0.6rem;font-family:'JetBrains Mono',monospace;">
+                Thresholds: MW ≤ 500 Da &nbsp;·&nbsp; LogP ≤ 5 &nbsp;·&nbsp; HBD ≤ 5 &nbsp;·&nbsp; HBA ≤ 10
+                </div>
+                """, unsafe_allow_html=True)
+
+with tab_batch:
+    st.markdown('<div class="input-label">Upload CSV</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="font-size:0.85rem;color:#6b7280;margin-bottom:1rem;line-height:1.6;">
+    Upload a CSV file with a column named <code>smiles</code>. The tool will score every
+    row and return a downloadable CSV with model score, formula score, physicochemical
+    properties, tier classification, and Ro5 violation count.
+    </div>
+    """, unsafe_allow_html=True)
+
+    uploaded = st.file_uploader("", type=["csv"], label_visibility="collapsed")
+
+    if uploaded is not None:
+        df_in = pd.read_csv(uploaded)
+
+        if "smiles" not in df_in.columns:
+            st.markdown("""
+            <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:4px;
+                        padding:0.9rem 1.2rem;font-size:0.85rem;color:#991b1b;">
+                CSV must contain a column named <strong>smiles</strong>.
             </div>
-            <div class="prop-cell">
-                <div class="prop-name">LogP</div>
-                <div class="prop-value">{logp:.2f}</div>
-            </div>
-            <div class="prop-cell">
-                <div class="prop-name">TPSA</div>
-                <div class="prop-value">{tpsa:.1f}<span class="prop-unit">Å²</span></div>
-            </div>
-            <div class="prop-cell">
-                <div class="prop-name">HB Donors</div>
-                <div class="prop-value">{hbd}</div>
-            </div>
-            <div class="prop-cell">
-                <div class="prop-name">HB Acceptors</div>
-                <div class="prop-value">{hba}</div>
-            </div>
-            <div class="prop-cell">
-                <div class="prop-name">Ring Count</div>
-                <div class="prop-value">{rings}</div>
-            </div>
-            <div class="prop-cell">
-                <div class="prop-name">MW Class</div>
-                <div class="prop-value" style="font-size:0.82rem;margin-top:3px;">{"bRo5" if mw >= 500 else "Ro5"}</div>
-            </div>
-            <div class="prop-cell">
-                <div class="prop-name">Ro5 Violations</div>
-                <div class="prop-value">{sum([mw > 500, logp > 5, hbd > 5, hba > 10])}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+        else:
+            run_batch = st.button("Run Batch Analysis", key="batch_run")
+            if run_batch:
+                model, scaler, feature_order = load_assets()
+                records = []
+                progress = st.progress(0)
+                status   = st.empty()
+                total    = len(df_in)
+
+                for i, row in df_in.iterrows():
+                    smi = str(row["smiles"])
+                    status.markdown(
+                        f'<div style="font-family:JetBrains Mono,monospace;font-size:0.72rem;'
+                        f'color:#6b7280;">Evaluating {i+1} / {total}</div>',
+                        unsafe_allow_html=True
+                    )
+                    progress.progress(int((i + 1) / total * 100))
+                    res = evaluate_single(smi, model, scaler, feature_order)
+
+                    if res is None:
+                        records.append({
+                            "smiles":                  smi,
+                            "model_score_%":           "INVALID",
+                            "formula_score_%":         "INVALID",
+                            "verdict_model":           "INVALID",
+                            "tier":                    "INVALID",
+                            "MW_Da":                   "",
+                            "LogP":                    "",
+                            "TPSA_A2":                 "",
+                            "HB_donors":               "",
+                            "HB_acceptors":            "",
+                            "ring_count":              "",
+                            "rotatable_bonds":         "",
+                            "ro5_violation_count":     "",
+                            "ro5_violations_detail":   "",
+                        })
+                    else:
+                        records.append({
+                            "smiles":                  smi,
+                            "model_score_%":           f"{res['model_prob']:.2f}",
+                            "formula_score_%":         f"{res['formula_prob']:.2f}",
+                            "verdict_model":           "Drug-like" if res['model_prob'] >= 50 else "Non drug-like",
+                            "tier":                    res["tier"],
+                            "MW_Da":                   f"{res['mw']:.2f}",
+                            "LogP":                    f"{res['logp']:.3f}",
+                            "TPSA_A2":                 f"{res['tpsa']:.2f}",
+                            "HB_donors":               res["hbd"],
+                            "HB_acceptors":            res["hba"],
+                            "ring_count":              res["rings"],
+                            "rotatable_bonds":         res["n_rot"],
+                            "ro5_violation_count":     len(res["ro5_v"]),
+                            "ro5_violations_detail":   " | ".join(res["ro5_v"]) if res["ro5_v"] else "none",
+                        })
+
+                status.empty()
+                progress.empty()
+
+                df_out = pd.DataFrame(records)
+
+                st.markdown('<div class="section-head">Batch Results</div>', unsafe_allow_html=True)
+                st.dataframe(df_out, use_container_width=True, hide_index=True)
+
+                csv_bytes = df_out.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="Download Results CSV",
+                    data=csv_bytes,
+                    file_name="druglikeness_results.csv",
+                    mime="text/csv",
+                )
 
 st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
 with st.expander("Model architecture & scoring formula"):
@@ -478,6 +694,7 @@ with st.expander("Model architecture & scoring formula"):
     A surrogate logistic regression was trained on these 10 features against the SNN's continuous
     output probability (not the original binary labels), stratified by molecular weight to yield
     two tiers. Pearson R = 0.32 against full model; ~75% binary classification accuracy retained.
+    The formula is provided for interpretability only — the deep model score is the authoritative prediction.
     </p>
     </div>
     """, unsafe_allow_html=True)
@@ -524,16 +741,8 @@ with st.expander("Model architecture & scoring formula"):
 
     coef_df = pd.DataFrame({
         "Descriptor": [
-            "BCUT2D_CHGHI",
-            "fr_Ar_N",
-            "TPSA",
-            "EState_VSA2",
-            "EState_VSA10",
-            "NumArHetero",
-            "fr_guanido",
-            "RingCount",
-            "SMR_VSA6",
-            "Chi1n",
+            "BCUT2D_CHGHI", "fr_Ar_N", "TPSA", "EState_VSA2", "EState_VSA10",
+            "NumArHetero", "fr_guanido", "RingCount", "SMR_VSA6", "Chi1n",
         ],
         "Description": [
             "Highest generic charge — electrostatic distribution",
@@ -557,11 +766,7 @@ with st.expander("Model architecture & scoring formula"):
         ],
     })
 
-    st.dataframe(
-        coef_df,
-        use_container_width=True,
-        hide_index=True,
-    )
+    st.dataframe(coef_df, use_container_width=True, hide_index=True)
 
 st.markdown("""
 <div style="margin-top:3rem;padding-top:1.2rem;border-top:1px solid #e5e7eb;
