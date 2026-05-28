@@ -100,7 +100,6 @@ def calculate_formula(mol, desc_dict):
              + 0.3898 * v['RingCount']
              + 0.3284 * v['Chi1n']
              + 0.0026 * v['BertzCT']
-             + 0.0026 * v['SMR_VSA6']
              + 0.3701 * v['NumHAcceptors']
              - 1.8925 * v['FractionCSP3'])
     else:
@@ -716,7 +715,6 @@ with st.expander("Model architecture & scoring formula"):
         r" + 0.3898\,(\text{RingCount})"
         r" + 0.3284\,(\text{Chi1n})"
         r" + 0.0026\,(\text{BertzCT})"
-        r" + 0.0026\,(\text{SMR\_VSA6})"
         r" + 0.3701\,(\text{NumHAcceptors})"
         r" - 1.8925\,(\text{FractionCSP3})"
     )
@@ -747,10 +745,9 @@ with st.expander("Model architecture & scoring formula"):
     coef_df = pd.DataFrame({
         "Descriptor": [
             "BCUT2D_CHGHI", "fr_Ar_N", "TPSA", "EState_VSA2", "EState_VSA10",
-            "RingCount", "Chi1n", "BertzCT", "SMR_VSA6", "NumHAcceptors",
-            "FractionCSP3",
+            "RingCount", "Chi1n", "BertzCT", "NumHAcceptors", "FractionCSP3",
             "—",
-            "NumArHetero", "fr_guanido",
+            "SMR_VSA6", "NumArHetero", "fr_guanido",
         ],
         "Description": [
             "Highest generic charge — electrostatic distribution",
@@ -761,26 +758,24 @@ with st.expander("Model architecture & scoring formula"):
             "Total ring count — rigidity and complexity",
             "1st-order path connectivity index — structural branching",
             "Bertz complexity index — overall molecular complexity",
-            "Molar refractivity VSA (bin 6) — polarizability",
             "H-bond acceptor count — pharmacophoric anchor",
-            "Fraction sp3 carbons — penalises fully saturated inert structures",
+            "Fraction sp3 carbons — penalises inert saturated structures",
             "Tier 2 only",
+            "Molar refractivity VSA (bin 6) — polarizability",
             "Number of aromatic heteroatoms",
             "Number of guanidine groups — high basicity",
         ],
         "Tier 1 coeff.": [
             "+2.6147", "+0.0544", "+0.0208", "+0.1122", "+0.0602",
-            "+0.3898", "+0.3284", "+0.0026", "+0.0026", "+0.3701",
-            "−1.8925",
+            "+0.3898", "+0.3284", "+0.0026", "+0.3701", "−1.8925",
             "",
-            "—", "—",
+            "—", "—", "—",
         ],
         "Tier 2 coeff.": [
             "+8.1213", "+0.1382", "+0.0104", "+0.0406", "−0.0368",
-            "−0.2622", "−0.1402", "—", "−0.0095", "—",
-            "—",
+            "−0.2622", "−0.1402", "—", "—", "—",
             "",
-            "+0.4550", "−0.9592",
+            "−0.0095", "+0.4550", "−0.9592",
         ],
     })
 
