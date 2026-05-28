@@ -75,30 +75,34 @@ def calculate_formula(mol, desc_dict):
     num_ar_hetero = desc_dict.get('NumArHetero', desc_dict.get('NumAromaticHeterocycles', 0.0))
 
     v = {
-        'BCUT2D_CHGHI': desc_dict.get('BCUT2D_CHGHI', 0.0),
-        'fr_Ar_N':       desc_dict.get('fr_Ar_N', 0.0),
-        'TPSA':          desc_dict.get('TPSA', 0.0),
-        'EState_VSA2':   desc_dict.get('EState_VSA2', 0.0),
-        'EState_VSA10':  desc_dict.get('EState_VSA10', 0.0),
-        'NumArHetero':   num_ar_hetero,
-        'fr_guanido':    desc_dict.get('fr_guanido', 0.0),
-        'RingCount':     desc_dict.get('RingCount', 0.0),
-        'SMR_VSA6':      desc_dict.get('SMR_VSA6', 0.0),
-        'Chi1n':         desc_dict.get('Chi1n', 0.0),
+        'BCUT2D_CHGHI':   desc_dict.get('BCUT2D_CHGHI', 0.0),
+        'fr_Ar_N':        desc_dict.get('fr_Ar_N', 0.0),
+        'TPSA':           desc_dict.get('TPSA', 0.0),
+        'EState_VSA2':    desc_dict.get('EState_VSA2', 0.0),
+        'EState_VSA10':   desc_dict.get('EState_VSA10', 0.0),
+        'NumArHetero':    num_ar_hetero,
+        'fr_guanido':     desc_dict.get('fr_guanido', 0.0),
+        'RingCount':      desc_dict.get('RingCount', 0.0),
+        'SMR_VSA6':       desc_dict.get('SMR_VSA6', 0.0),
+        'Chi1n':          desc_dict.get('Chi1n', 0.0),
+        'BertzCT':        desc_dict.get('BertzCT', 0.0),
+        'FractionCSP3':   desc_dict.get('FractionCSP3', 0.0),
+        'NumHAcceptors':  desc_dict.get('NumHAcceptors', 0.0),
     }
 
     if mw < 500:
-        Z = (-9.7165
-             + 4.3450 * v['BCUT2D_CHGHI']
-             + 0.4140 * v['fr_Ar_N']
-             + 0.0100 * v['TPSA']
-             + 0.0422 * v['EState_VSA2']
-             + 0.0292 * v['EState_VSA10']
-             + 0.2297 * v['NumArHetero']
-             - 1.6688 * v['fr_guanido']
-             - 0.1624 * v['RingCount']
-             - 0.0265 * v['SMR_VSA6']
-             - 0.1161 * v['Chi1n'])
+        Z = (-7.1577
+             + 2.6147 * v['BCUT2D_CHGHI']
+             + 0.0544 * v['fr_Ar_N']
+             + 0.0208 * v['TPSA']
+             + 0.1122 * v['EState_VSA2']
+             + 0.0602 * v['EState_VSA10']
+             + 0.3898 * v['RingCount']
+             + 0.3284 * v['Chi1n']
+             + 0.0026 * v['BertzCT']
+             + 0.0026 * v['SMR_VSA6']
+             + 0.3701 * v['NumHAcceptors']
+             - 1.8925 * v['FractionCSP3'])
     else:
         Z = (-17.2985
              + 8.1213 * v['BCUT2D_CHGHI']
@@ -703,17 +707,18 @@ with st.expander("Model architecture & scoring formula"):
 
     st.markdown("**Tier 1 — Standard molecules (MW < 500 Da)**")
     st.latex(
-        r"Z = -9.7165"
-        r" + 4.3450\,(\text{BCUT2D\_CHGHI})"
-        r" + 0.4140\,(\text{fr\_Ar\_N})"
-        r" + 0.0100\,(\text{TPSA})"
-        r" + 0.0422\,(\text{EState\_VSA2})"
-        r" + 0.0292\,(\text{EState\_VSA10})"
-        r" + 0.2297\,(\text{NumArHetero})"
-        r" - 1.6688\,(\text{fr\_guanido})"
-        r" - 0.1624\,(\text{RingCount})"
-        r" - 0.0265\,(\text{SMR\_VSA6})"
-        r" - 0.1161\,(\text{Chi1n})"
+        r"Z = -7.1577"
+        r" + 2.6147\,(\text{BCUT2D\_CHGHI})"
+        r" + 0.0544\,(\text{fr\_Ar\_N})"
+        r" + 0.0208\,(\text{TPSA})"
+        r" + 0.1122\,(\text{EState\_VSA2})"
+        r" + 0.0602\,(\text{EState\_VSA10})"
+        r" + 0.3898\,(\text{RingCount})"
+        r" + 0.3284\,(\text{Chi1n})"
+        r" + 0.0026\,(\text{BertzCT})"
+        r" + 0.0026\,(\text{SMR\_VSA6})"
+        r" + 0.3701\,(\text{NumHAcceptors})"
+        r" - 1.8925\,(\text{FractionCSP3})"
     )
 
     st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
@@ -742,7 +747,10 @@ with st.expander("Model architecture & scoring formula"):
     coef_df = pd.DataFrame({
         "Descriptor": [
             "BCUT2D_CHGHI", "fr_Ar_N", "TPSA", "EState_VSA2", "EState_VSA10",
-            "NumArHetero", "fr_guanido", "RingCount", "SMR_VSA6", "Chi1n",
+            "RingCount", "Chi1n", "BertzCT", "SMR_VSA6", "NumHAcceptors",
+            "FractionCSP3",
+            "—",
+            "NumArHetero", "fr_guanido",
         ],
         "Description": [
             "Highest generic charge — electrostatic distribution",
@@ -750,19 +758,29 @@ with st.expander("Model architecture & scoring formula"):
             "Topological polar surface area — membrane permeability",
             "Electrotopological state VSA (bin 2) — electron accessibility",
             "Electrotopological state VSA (bin 10) — steric bulk",
+            "Total ring count — rigidity and complexity",
+            "1st-order path connectivity index — structural branching",
+            "Bertz complexity index — overall molecular complexity",
+            "Molar refractivity VSA (bin 6) — polarizability",
+            "H-bond acceptor count — pharmacophoric anchor",
+            "Fraction sp3 carbons — penalises fully saturated inert structures",
+            "Tier 2 only",
             "Number of aromatic heteroatoms",
             "Number of guanidine groups — high basicity",
-            "Total ring count — rigidity and complexity",
-            "Molar refractivity VSA (bin 6) — polarizability",
-            "1st-order path connectivity index — structural branching",
         ],
         "Tier 1 coeff.": [
-            "+4.3450", "+0.4140", "+0.0100", "+0.0422", "+0.0292",
-            "+0.2297", "−1.6688", "−0.1624", "−0.0265", "−0.1161",
+            "+2.6147", "+0.0544", "+0.0208", "+0.1122", "+0.0602",
+            "+0.3898", "+0.3284", "+0.0026", "+0.0026", "+0.3701",
+            "−1.8925",
+            "",
+            "—", "—",
         ],
         "Tier 2 coeff.": [
             "+8.1213", "+0.1382", "+0.0104", "+0.0406", "−0.0368",
-            "+0.4550", "−0.9592", "−0.2622", "−0.0095", "−0.1402",
+            "−0.2622", "−0.1402", "—", "−0.0095", "—",
+            "—",
+            "",
+            "+0.4550", "−0.9592",
         ],
     })
 
