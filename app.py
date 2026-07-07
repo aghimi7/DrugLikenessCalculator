@@ -453,7 +453,7 @@ masthead_html = """
     <div class="masthead-title">DrugLikenessModel</div>
     <div class="masthead-sub">
         A bioactivity-grounded successor to Lipinski's Rule of Five.
-        Trained on 209,269 ChEMBL compounds across the full chemical space,
+        Trained on 209,269 ChEMBL compounds across standadr and beyond-Rule-of-Five chemical space,
         including macrocycles and bRo5 therapeutics.
     </div>
 </div>
