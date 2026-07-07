@@ -432,9 +432,24 @@ html, body, [class*="css"] {
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("""
+from pathlib import Path
+import base64
+
+def load_logo(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+logo_path = Path("deepdrug_logo.png")
+if logo_path.exists():
+    logo_b64 = load_logo(logo_path)
+    logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:52px;margin-bottom:0.4rem;">'
+else:
+    logo_html = ""
+
+st.markdown(f"""
 <div class="masthead">
     <div class="masthead-label">Drug-Likeness Prediction</div>
+    {logo_html}
     <div class="masthead-title">DrugLikenessModel</div>
     <div class="masthead-sub">
         A bioactivity-grounded successor to Lipinski's Rule of Five.
