@@ -446,10 +446,10 @@ if logo_path.exists():
 else:
     logo_html = ""
 
-st.markdown(f"""
+masthead_html = """
 <div class="masthead">
     <div class="masthead-label">Drug-Likeness Prediction</div>
-    {logo_html}
+    """ + logo_html + """
     <div class="masthead-title">DrugLikenessModel</div>
     <div class="masthead-sub">
         A bioactivity-grounded successor to Lipinski's Rule of Five.
@@ -457,7 +457,9 @@ st.markdown(f"""
         including macrocycles and bRo5 therapeutics.
     </div>
 </div>
-""", unsafe_allow_html=True)
+"""
+
+st.markdown(masthead_html, unsafe_allow_html=True)
 
 tab_single, tab_batch = st.tabs(["Single Molecule", "Batch / CSV"])
 
