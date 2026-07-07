@@ -439,7 +439,7 @@ def load_logo(path):
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
 
-logo_path = Path("deepdrug_logo.png")
+logo_path = Path("logo_cropped.png")
 if logo_path.exists():
     logo_b64 = load_logo(logo_path)
     logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:52px;margin-bottom:0.4rem;">'
